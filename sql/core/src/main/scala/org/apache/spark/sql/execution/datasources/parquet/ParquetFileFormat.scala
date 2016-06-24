@@ -46,6 +46,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.catalyst.parser.LegacyTypeStringParser
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
@@ -339,6 +340,10 @@ class ParquetFileFormat
     val enableVectorizedReader: Boolean =
       sparkSession.sessionState.conf.parquetVectorizedReaderEnabled &&
       resultSchema.forall(_.dataType.isInstanceOf[AtomicType])
+    val enableRecordFilter: Boolean =
+      sparkSession.sessionState.conf.parquetRecordFilterEnabled
+    val timestampConversion: Boolean =
+      sparkSession.sessionState.conf.isParquetINT96TimestampConversion
     // Whole stage codegen (PhysicalRDD) is able to deal with batches directly
     val returningBatch = supportBatch(sparkSession, resultSchema)
 
@@ -357,6 +362,12 @@ class ParquetFileFormat
           fileSplit.getLocations,
           null)
 
+      val convertTz =
+        if (timestampConversion && !isCreatedByParquetMr()) {
+          Some(DateTimeUtils.getTimeZone(sharedConf.get(SQLConf.SESSION_LOCAL_TIMEZONE.key)))
+        } else {
+          None
+        }
       val attemptId = new TaskAttemptID(new TaskID(new JobID(), TaskType.MAP, 0), 0)
       val hadoopAttemptContext =
         new TaskAttemptContextImpl(broadcastedHadoopConf.value.value, attemptId)
@@ -378,13 +389,12 @@ class ParquetFileFormat
       } else {
         logDebug(s"Falling back to parquet-mr")
         // ParquetRecordReader returns UnsafeRow
-        val reader = pushed match {
-          case Some(filter) =>
-            new ParquetRecordReader[UnsafeRow](
-              new ParquetReadSupport,
-              FilterCompat.get(filter, null))
-          case _ =>
-            new ParquetRecordReader[UnsafeRow](new ParquetReadSupport)
+        val readSupport = new ParquetReadSupport(convertTz, true)
+        val reader = if (pushed.isDefined && enableRecordFilter) {
+          val parquetFilter = FilterCompat.get(pushed.get, null)
+          new ParquetRecordReader[UnsafeRow](readSupport, parquetFilter)
+        } else {
+          new ParquetRecordReader[UnsafeRow](readSupport)
         }
         reader.initialize(split, hadoopAttemptContext)
         reader

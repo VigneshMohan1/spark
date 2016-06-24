@@ -127,6 +127,9 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: SQLConf)
       CheckCartesianProducts(conf)) ::
     Batch("OptimizeCodegen", Once,
       OptimizeCodegen(conf)) ::
+    Batch("Field Extraction Pushdown", fixedPoint,
+      AggregateFieldExtractionPushdown,
+      JoinFieldExtractionPushdown) ::
     Batch("RewriteSubquery", Once,
       RewritePredicateSubquery,
       CollapseProject) :: Nil

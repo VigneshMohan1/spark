@@ -127,8 +127,8 @@ private[parquet] class ParquetRowConverter(
   extends ParquetGroupConverter(updater) with Logging {
 
   assert(
-    parquetType.getFieldCount == catalystType.length,
-    s"""Field counts of the Parquet schema and the Catalyst schema don't match:
+    parquetType.getFieldCount <= catalystType.length,
+    s"""Field count of the Parquet schema is greater than the field count of the Catalyst schema:
        |
        |Parquet schema:
        |$parquetType
@@ -177,10 +177,12 @@ private[parquet] class ParquetRowConverter(
 
   // Converters for each field.
   private val fieldConverters: Array[Converter with HasParentContainerUpdater] = {
-    parquetType.getFields.asScala.zip(catalystType).zipWithIndex.map {
-      case ((parquetFieldType, catalystField), ordinal) =>
-        // Converted field value should be set to the `ordinal`-th cell of `currentRow`
-        newConverter(parquetFieldType, catalystField.dataType, new RowUpdater(currentRow, ordinal))
+    parquetType.getFields.asScala.map {
+      case parquetField =>
+        val fieldIndex = catalystType.fieldIndex(parquetField.getName)
+        val catalystField = catalystType(fieldIndex)
+        // Converted field value should be set to the `fieldIndex`-th cell of `currentRow`
+        newConverter(parquetField, catalystField.dataType, new RowUpdater(currentRow, fieldIndex))
     }.toArray
   }
 
@@ -188,7 +190,7 @@ private[parquet] class ParquetRowConverter(
 
   override def end(): Unit = {
     var i = 0
-    while (i < currentRow.numFields) {
+    while (i < fieldConverters.length) {
       fieldConverters(i).updater.end()
       i += 1
     }
@@ -197,8 +199,12 @@ private[parquet] class ParquetRowConverter(
 
   override def start(): Unit = {
     var i = 0
-    while (i < currentRow.numFields) {
+    while (i < fieldConverters.length) {
       fieldConverters(i).updater.start()
+      currentRow.setNullAt(i)
+      i += 1
+    }
+    while (i < currentRow.numFields) {
       currentRow.setNullAt(i)
       i += 1
     }
