@@ -124,9 +124,10 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: SQLConf)
       ConvertToLocalRelation,
       PropagateEmptyRelation) ::
     Batch("Check Cartesian Products", Once,
-      CheckCartesianProducts(conf)) ::
-    Batch("OptimizeCodegen", Once,
-      OptimizeCodegen(conf)) ::
+      CheckCartesianProducts) ::
+      Batch("Field Extraction Pushdown", fixedPoint,
+        AggregateFieldExtractionPushdown,
+        JoinFieldExtractionPushdown)
     Batch("RewriteSubquery", Once,
       RewritePredicateSubquery,
       CollapseProject) :: Nil
