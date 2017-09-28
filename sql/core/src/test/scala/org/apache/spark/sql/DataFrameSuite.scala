@@ -1789,4 +1789,17 @@ class DataFrameSuite extends QueryTest with SharedSQLContext {
   test("SPARK-22469: compare string with decimal") {
     checkAnswer(Seq("1.5").toDF("s").filter("s > 0.5"), Row("1.5"))
   }
+
+  test("SPARK-4502: Nested column pruning shouldn't fail filter") {
+    withTempPath { dir =>
+      val path = dir.getCanonicalPath
+      val data =
+        """{"a":{"b":1,"c":2}}
+          |{}""".stripMargin
+      Seq(data).toDF().repartition(1).write.text(path)
+      checkAnswer(
+        spark.read.json(path).filter($"a.b" > 1).select($"a.b"),
+        Seq.empty)
+    }
+  }
 }
