@@ -22,13 +22,12 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable
-
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.internal.SQLConf.PartitionOverwriteMode
 import org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -37,6 +36,10 @@ import org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter
 
 
 object SQLConf {
+
+  object PartitionOverwriteMode extends Enumeration {
+    val STATIC, DYNAMIC = Value
+  }
 
   private val sqlConfEntries = java.util.Collections.synchronizedMap(
     new java.util.HashMap[String, ConfigEntry[_]]())
@@ -819,6 +822,114 @@ object SQLConf {
       .intConf
       .createWithDefault(UnsafeExternalSorter.DEFAULT_NUM_ELEMENTS_FOR_SPILL_THRESHOLD.toInt)
 
+  val SUPPORT_QUOTED_REGEX_COLUMN_NAME = buildConf("spark.sql.parser.quotedRegexColumnNames")
+    .doc("When true, quoted Identifiers (using backticks) in SELECT statement are interpreted" +
+      " as regular expressions.")
+    .booleanConf
+    .createWithDefault(false)
+
+  val RANGE_EXCHANGE_SAMPLE_SIZE_PER_PARTITION =
+    buildConf("spark.sql.execution.rangeExchange.sampleSizePerPartition")
+      .internal()
+      .doc("Number of points to sample per partition in order to determine the range boundaries" +
+        " for range partitioning, typically used in global sorting (without limit).")
+      .intConf
+      .createWithDefault(100)
+
+  val ARROW_EXECUTION_ENABLE =
+    buildConf("spark.sql.execution.arrow.enabled")
+      .internal()
+      .doc("Make use of Apache Arrow for columnar data transfers. Currently available " +
+        "for use with pyspark.sql.DataFrame.toPandas with the following data types: " +
+        "StringType, BinaryType, BooleanType, DoubleType, FloatType, ByteType, IntegerType, " +
+        "LongType, ShortType")
+      .booleanConf
+      .createWithDefault(false)
+
+  val ARROW_EXECUTION_MAX_RECORDS_PER_BATCH =
+    buildConf("spark.sql.execution.arrow.maxRecordsPerBatch")
+      .internal()
+      .doc("When using Apache Arrow, limit the maximum number of records that can be written " +
+        "to a single ArrowRecordBatch in memory. If set to zero or negative there is no limit.")
+      .intConf
+      .createWithDefault(10000)
+
+  val PANDAS_RESPECT_SESSION_LOCAL_TIMEZONE =
+    buildConf("spark.sql.execution.pandas.respectSessionTimeZone")
+      .internal()
+      .doc("When true, make Pandas DataFrame with timestamp type respecting session local " +
+        "timezone when converting to/from Pandas DataFrame. This configuration will be " +
+        "deprecated in the future releases.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_EXCEPT_WITH_FILTER = buildConf("spark.sql.optimizer.replaceExceptWithFilter")
+    .internal()
+    .doc("When true, the apply function of the rule verifies whether the right node of the" +
+      " except operation is of type Filter or Project followed by Filter. If yes, the rule" +
+      " further verifies 1) Excluding the filter operations from the right (as well as the" +
+      " left node, if any) on the top, whether both the nodes evaluates to a same result." +
+      " 2) The left and right nodes don't contain any SubqueryExpressions. 3) The output" +
+      " column names of the left node are distinct. If all the conditions are met, the" +
+      " rule will replace the except operation with a Filter by flipping the filter" +
+      " condition(s) of the right node.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val SQL_STRING_REDACTION_PATTERN =
+    ConfigBuilder("spark.sql.redaction.string.regex")
+      .doc("Regex to decide which parts of strings produced by Spark contain sensitive " +
+        "information. When this regex matches a string part, that string part is replaced by a " +
+        "dummy value. This is currently used to redact the output of SQL explain commands. " +
+        "When this conf is not set, the value from `spark.redaction.string.regex` is used.")
+      .fallbackConf(org.apache.spark.internal.config.STRING_REDACTION_PATTERN)
+
+  val CONCAT_BINARY_AS_STRING = buildConf("spark.sql.function.concatBinaryAsString")
+    .doc("When this option is set to false and all inputs are binary, `functions.concat` returns " +
+      "an output as binary. Otherwise, it returns as a string. ")
+    .booleanConf
+    .createWithDefault(false)
+
+  val CONTINUOUS_STREAMING_EXECUTOR_QUEUE_SIZE =
+    buildConf("spark.sql.streaming.continuous.executorQueueSize")
+      .internal()
+      .doc("The size (measured in number of rows) of the queue used in continuous execution to" +
+        " buffer the results of a ContinuousDataReader.")
+      .intConf
+      .createWithDefault(1024)
+
+  val CONTINUOUS_STREAMING_EXECUTOR_POLL_INTERVAL_MS =
+    buildConf("spark.sql.streaming.continuous.executorPollIntervalMs")
+      .internal()
+      .doc("The interval at which continuous execution readers will poll to check whether" +
+        " the epoch has advanced on the driver.")
+      .timeConf(TimeUnit.MILLISECONDS)
+      .createWithDefault(100)
+
+  val PARTITION_OVERWRITE_MODE =
+    buildConf("spark.sql.sources.partitionOverwriteMode")
+      .doc("When INSERT OVERWRITE a partitioned data source table, we currently support 2 modes: " +
+        "static and dynamic. In static mode, Spark deletes all the partitions that match the " +
+        "partition specification(e.g. PARTITION(a=1,b)) in the INSERT statement, before " +
+        "overwriting. In dynamic mode, Spark doesn't delete partitions ahead, and only overwrite " +
+        "those partitions that have data written into it at runtime. By default we use static " +
+        "mode to keep the same behavior of Spark prior to 2.3. Note that this config doesn't " +
+        "affect Hive serde tables, as they are always overwritten with dynamic mode.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(PartitionOverwriteMode.values.map(_.toString))
+      .createWithDefault(PartitionOverwriteMode.STATIC.toString)
+
+
+  val NESTED_SCHEMA_PRUNING_ENABLED =
+    buildConf("spark.sql.nestedSchemaPruning.enabled")
+      .internal()
+      .doc("Prune nested fields from a logical relation's output which are unnecessary in " +
+        "satisfying a query. This optimization allows columnar file format readers to avoid " +
+        "reading unnecessary nested column data.")
+      .booleanConf
+      .createWithDefault(true)
+
   object Deprecated {
     val MAPRED_REDUCE_TASKS = "mapred.reduce.tasks"
   }
@@ -1082,6 +1193,30 @@ class SQLConf extends Serializable with Logging {
   def starSchemaDetection: Boolean = getConf(STARSCHEMA_DETECTION)
 
   def starSchemaFTRatio: Double = getConf(STARSCHEMA_FACT_TABLE_RATIO)
+
+  def supportQuotedRegexColumnName: Boolean = getConf(SUPPORT_QUOTED_REGEX_COLUMN_NAME)
+
+  def rangeExchangeSampleSizePerPartition: Int = getConf(RANGE_EXCHANGE_SAMPLE_SIZE_PER_PARTITION)
+
+  def arrowEnable: Boolean = getConf(ARROW_EXECUTION_ENABLE)
+
+  def arrowMaxRecordsPerBatch: Int = getConf(ARROW_EXECUTION_MAX_RECORDS_PER_BATCH)
+
+  def pandasRespectSessionTimeZone: Boolean = getConf(PANDAS_RESPECT_SESSION_LOCAL_TIMEZONE)
+
+  def replaceExceptWithFilter: Boolean = getConf(REPLACE_EXCEPT_WITH_FILTER)
+
+  def continuousStreamingExecutorQueueSize: Int = getConf(CONTINUOUS_STREAMING_EXECUTOR_QUEUE_SIZE)
+
+  def continuousStreamingExecutorPollIntervalMs: Long =
+    getConf(CONTINUOUS_STREAMING_EXECUTOR_POLL_INTERVAL_MS)
+
+  def concatBinaryAsString: Boolean = getConf(CONCAT_BINARY_AS_STRING)
+
+  def partitionOverwriteMode: PartitionOverwriteMode.Value =
+    PartitionOverwriteMode.withName(getConf(PARTITION_OVERWRITE_MODE))
+
+  def nestedSchemaPruningEnabled: Boolean = getConf(NESTED_SCHEMA_PRUNING_ENABLED)
 
   /** ********************** SQLConf functionality methods ************ */
 
