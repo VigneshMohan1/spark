@@ -127,6 +127,9 @@ abstract class Optimizer(sessionCatalog: SessionCatalog, conf: SQLConf)
       CheckCartesianProducts(conf)) ::
     Batch("OptimizeCodegen", Once,
       OptimizeCodegen(conf)) ::
+    Batch("Field Extraction Pushdown", fixedPoint,
+      AggregateFieldExtractionPushdown,
+      JoinFieldExtractionPushdown) ::
     Batch("RewriteSubquery", Once,
       RewritePredicateSubquery,
       CollapseProject) :: Nil
@@ -754,7 +757,8 @@ object PushDownPredicate extends Rule[LogicalPlan] with PredicateHelper {
       project.copy(child = Filter(replaceAlias(condition, aliasMap), grandChild))
 
     case filter @ Filter(condition, aggregate: Aggregate)
-      if aggregate.aggregateExpressions.forall(_.deterministic) =>
+      if aggregate.aggregateExpressions.forall(_.deterministic)
+        && aggregate.groupingExpressions.nonEmpty =>
       // Find all the aliased expressions in the aggregate list that don't include any actual
       // AggregateExpression, and create a map from the alias to the expression
       val aliasMap = AttributeMap(aggregate.aggregateExpressions.collect {

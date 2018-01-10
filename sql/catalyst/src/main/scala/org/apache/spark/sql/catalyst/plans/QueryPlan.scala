@@ -64,20 +64,20 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
     constraint match {
       // When the root is IsNotNull, we can push IsNotNull through the child null intolerant
       // expressions
-      case IsNotNull(expr) => scanNullIntolerantAttribute(expr).map(IsNotNull(_))
+      case IsNotNull(expr) => scanNullIntolerantField(expr).map(IsNotNull(_))
       // Constraints always return true for all the inputs. That means, null will never be returned.
       // Thus, we can infer `IsNotNull(constraint)`, and also push IsNotNull through the child
       // null intolerant expressions.
-      case _ => scanNullIntolerantAttribute(constraint).map(IsNotNull(_))
+      case _ => scanNullIntolerantField(constraint).map(IsNotNull(_))
     }
 
   /**
    * Recursively explores the expressions which are null intolerant and returns all attributes
    * in these expressions.
    */
-  private def scanNullIntolerantAttribute(expr: Expression): Seq[Attribute] = expr match {
+  private def scanNullIntolerantField(expr: Expression): Seq[Attribute] = expr match {
     case a: Attribute => Seq(a)
-    case _: NullIntolerant => expr.children.flatMap(scanNullIntolerantAttribute)
+    case _: NullIntolerant => expr.children.flatMap(scanNullIntolerantField)
     case _ => Seq.empty[Attribute]
   }
 

@@ -378,13 +378,14 @@ class ParquetFileFormat
       } else {
         logDebug(s"Falling back to parquet-mr")
         // ParquetRecordReader returns UnsafeRow
+        val readSupport = new ParquetReadSupport(true)
         val reader = pushed match {
           case Some(filter) =>
             new ParquetRecordReader[UnsafeRow](
-              new ParquetReadSupport,
+              readSupport,
               FilterCompat.get(filter, null))
           case _ =>
-            new ParquetRecordReader[UnsafeRow](new ParquetReadSupport)
+            new ParquetRecordReader[UnsafeRow](readSupport)
         }
         reader.initialize(split, hadoopAttemptContext)
         reader
